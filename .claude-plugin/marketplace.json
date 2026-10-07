@@ -1,0 +1,6 @@
+{
+  "name": "usage-band",
+  "owner": { "name": "Arnold" },
+  "description": "Claude Code 用量面板 mod",
+  "plugins": [{ "name": "usage-band", "source": "./" }]
+}
