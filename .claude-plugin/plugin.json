@@ -1,6 +1,6 @@
 {
   "name": "usage-band",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "提示框上方顯示 token 用量與訂閱額度剩餘",
   "author": { "name": "Arnold" },
   "types": "./types/index.d.ts"

@@ -1,9 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionContextUsage, SessionCost, SessionRateLimit } from 'claude-code'
 
-import type { Usage } from '../types'
+import type { Tokens, Usage } from '../types'
 
 const usage = atom({ plugin: 'usage-band', key: 'usage' } as const, null)
+const EMPTY: Tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turns: 0, since: 0 }
+const tokens = atom({ plugin: 'usage-band', key: 'tokens' } as const, EMPTY)
 
 const LABELS: Record<string, { name: string; icon: string; color: string }> = {
   five_hour: { name: '5 小時額度', icon: '◷', color: '#5FD7FF' },
@@ -47,6 +49,29 @@ export const register: Register = on => {
     const r = await next(e)
     const u = await $.session.usage()
     await update($, usage, () => toUsage(u.context, u.rateLimits, u.cost))
+    // 熱重載也會觸發 session.start，startedAt 沒變就保留累計
+    await update($, tokens, t => (t.since === u.startedAt ? t : { ...EMPTY, since: u.startedAt }))
+    return r
+  })
+
+  // 每個 turn（含子代理）結束時累加它的 token 用量
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    const t = e.usage
+    if (t) {
+      const { startedAt } = await $.session.usage()
+      await update($, tokens, prev => {
+        const base = prev.since === startedAt ? prev : { ...EMPTY, since: startedAt }
+        return {
+          ...base,
+          input: base.input + t.input_tokens,
+          output: base.output + t.output_tokens,
+          cacheRead: base.cacheRead + t.cache_read_input_tokens,
+          cacheWrite: base.cacheWrite + t.cache_creation_input_tokens,
+          turns: base.turns + 1,
+        }
+      })
+    }
     return r
   })
 
@@ -63,6 +88,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const u = await read($, usage)
     if (e.props.hasSurvey || u === null) return next(e)
+    const tk = await read($, tokens)
 
     const { Box, Text } = $.ui.resolve(e)
     const now = await $.clock.now()
@@ -120,6 +146,23 @@ export const register: Register = on => {
           <Text color="#8A8A8A">
             {u.tokens === undefined ? `— / ${fmtTokens(u.window)}` : `${fmtTokens(u.tokens)} / ${fmtTokens(u.window)}`}
           </Text>
+        </Box>
+
+        <Box columnGap={1}>
+          {label('Σ', 'Token', '#5FD7AF')}
+          {tk.turns === 0 ? (
+            <Text color="#8A8A8A" italic>
+              尚無回應
+            </Text>
+          ) : (
+            <Text>
+              <Text color="#8A8A8A">輸入 </Text>
+              <Text color="#87D7FF" bold>{fmtTokens(tk.input + tk.cacheRead + tk.cacheWrite)}</Text>
+              <Text color="#8A8A8A">{`（快取讀 ${fmtTokens(tk.cacheRead)}・寫 ${fmtTokens(tk.cacheWrite)}）  輸出 `}</Text>
+              <Text color="#FFD787" bold>{fmtTokens(tk.output)}</Text>
+              <Text color="#8A8A8A">{`  · ${tk.turns} 回合`}</Text>
+            </Text>
+          )}
         </Box>
 
         {u.limits.length === 0 ? (
